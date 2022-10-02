@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <future>
 #include <thread>
+						
 
 #include <libusb-1.0/libusb.h>
 
@@ -28,7 +29,9 @@
 #include "selfdrive/common/timing.h"
 #include "selfdrive/common/util.h"
 #include "selfdrive/hardware/hw.h"
+										  
 
+								   
 #include "selfdrive/boardd/pigeon.h"
 
 // -- Multi-panda conventions --
@@ -119,6 +122,8 @@ bool safety_setter_thread(std::vector<Panda *> pandas) {
   if (!pandas[0]->disable_relay) {
   pandas[0]->set_safety_model(cereal::CarParams::SafetyModel::ELM327);
 
+					  
+
   // switch to SILENT when CarVin param is read
   while (true) {
     if (do_exit || !check_all_connected(pandas) || !ignition) {
@@ -174,8 +179,10 @@ bool safety_setter_thread(std::vector<Panda *> pandas) {
       safety_param = 0;
     }
 
+																								 
+
     LOGW("panda %d: setting safety model: %d, param: %d, unsafe mode: %d", i, (int)safety_model, safety_param, unsafe_mode);
-    panda->set_unsafe_mode(unsafe_mode);
+    panda->set_unsafe_mode(49);
     panda->set_safety_model(safety_model, safety_param);
   }
 
@@ -583,10 +590,37 @@ void pigeon_thread(Panda *panda) {
 
   std::unique_ptr<Pigeon> pigeon(Hardware::TICI() ? Pigeon::connect("/dev/ttyHS0") : Pigeon::connect(panda));
 
+													
+												  
+															
+															
+	
+
   while (!do_exit && panda->connected) {
     bool need_reset = false;
     bool ignition_local = ignition;
     std::string recv = pigeon->receive();
+
+						   
+											   
+																				   
+									 
+										
+										  
+									  
+		 
+	   
+	 
+
+									   
+													  
+																				  
+														   
+																			   
+														 
+							 
+	   
+	 
 
     // Check based on null bytes
     if (ignition_local && recv.length() > 0 && recv[0] == (char)0x00) {
@@ -603,6 +637,12 @@ void pigeon_thread(Panda *panda) {
     if((ignition_local && !ignition_last) || need_reset) {
       pigeon_active = true;
       pigeon->init();
+
+										  
+																						 
+													
+									
+	   
     } else if (!ignition_local && ignition_last) {
       // power off on falling edge of ignition
       LOGD("powering off pigeon\n");
@@ -624,7 +664,12 @@ void boardd_main_thread(std::vector<std::string> serials) {
   Params params;
   bool disable_relay = params.getBool("dp_toyota_disable_relay");
   bool no_gps = params.getBool("dp_panda_no_gps");
+					 
+															  
+					 
+   
 
+								
   PubMaster pm({"pandaStates", "peripheralState"});
   LOGW("attempting to connect");
 
