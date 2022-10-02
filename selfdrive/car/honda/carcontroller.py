@@ -124,6 +124,7 @@ class CarController():
     self.braking = False
     self.brake_steady = 0.
     self.brake_last = 0.
+    self.signal_last = 0.						 
     self.apply_brake_last = 0
     self.last_pump_ts = 0.
     self.packer = CANPacker(dbc_name)
@@ -153,13 +154,7 @@ class CarController():
     # *** rate limit after the enable check ***
     self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2., DT_CTRL)
 
-    # vehicle hud display, wait for one update from 10Hz 0x304 msg
-    if hud_show_lanes and CS.lkMode:
-      hud_lanes = 1
-    else:
-      hud_lanes = 0
-
-    if enabled:
+    if enabled and CS.out.cruiseState.enabled:
       if hud_show_car:
         hud_car = 2
       else:
@@ -169,6 +164,11 @@ class CarController():
 
     fcw_display, steer_required, acc_alert = process_hud_alert(hud_alert)
 
+							  
+											   
+								 
+
+																																																																	  
 
     # **** process the car messages ****
 
@@ -203,6 +203,7 @@ class CarController():
       lkas_active, CS.CP.carFingerprint, idx, CS.CP.openpilotLongitudinalControl))
 
     stopping = actuators.longControlState == LongCtrlState.stopping
+																   
 
     # wind brake from air resistance decel at high speed
     wind_brake = interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15])
@@ -266,6 +267,8 @@ class CarController():
 
         if dragonconf.dpAtl and dragonconf.dpAtlOpLong and not CS.out.cruiseActualEnabled:
           accel = 0.
+																				
+											
           gas = 0.
           self.brake_last = 0.
 
@@ -276,6 +279,9 @@ class CarController():
         else:
           apply_brake = clip(self.brake_last - wind_brake, 0.0, 1.0)
           apply_brake = int(clip(apply_brake * P.NIDEC_BRAKE_MAX, 0, P.NIDEC_BRAKE_MAX - 1))
+																																						
+							
+						  
           pump_on, self.last_pump_ts = brake_pump_hysteresis(apply_brake, self.apply_brake_last, self.last_pump_ts, ts)
 
           pcm_override = True
@@ -296,6 +302,9 @@ class CarController():
             else:
               self.gas = 0.0
             can_sends.append(create_gas_interceptor_command(self.packer, self.gas, idx))
+
+																							   
+																															 
 
     # Send dashboard UI commands.
     if dragonconf.dpAtl and not dragonconf.dpAtlOpLong:
