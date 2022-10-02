@@ -69,6 +69,7 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     preLaneChangeLeft @57;
     preLaneChangeRight @58;
     laneChange @59;
+								   
     lowMemory @63;
     stockAeb @64;
     ldw @65;
@@ -105,6 +106,12 @@ struct CarEvent @0x9b1657f34caf3ad3 {
     highCpuUsage @105;
     cruiseMismatch @106;
     lkasDisabled @107;
+    manualSteeringRequired @107;
+    manualLongitudinalRequired @108;
+    silentPedalPressed @109;
+    silentButtonEnable @110;
+    silentBrakeHold @111;
+    silentWrongGear @112;					 
 
     radarCanErrorDEPRECATED @15;
     communityFeatureDisallowedDEPRECATED @62;
@@ -195,6 +202,14 @@ struct CarState {
   # clutch (manual transmission only)
   clutchPressed @28 :Bool;
 
+  lkasEnabled @39 :Bool;
+  leftBlinkerOn @40 :Bool;
+  rightBlinkerOn @41 :Bool;
+  disengageByBrake @42 :Bool;
+  automaticLaneChange @43 :Bool;
+  belowLaneChangeSpeed @44 :Bool;
+  accEnabled @45 :Bool;
+  
   # which packets this state came from
   canMonoTimes @12: List(UInt64);
 
@@ -449,11 +464,14 @@ struct CarParams {
   vEgoStarting @59 :Float32; # Speed at which the car goes into starting state
   directAccelControl @30 :Bool; # Does the car have direct accel control or just gas/brake
   stoppingControl @31 :Bool; # Does the car allows full control even at lows speeds when stopping
+																		   
   stopAccel @60 :Float32; # Required acceleraton to keep vehicle stationary
   steerRateCost @33 :Float32; # Lateral MPC cost on steering rate
   steerControlType @34 :SteerControlType;
   radarOffCan @35 :Bool; # True when radar objects aren't visible on CAN
+																						  
   stoppingDecelRate @52 :Float32; # m/s^2/s while trying to stop
+																 
 
   steerActuatorDelay @36 :Float32; # Steering wheel actuator delay in seconds
   longitudinalActuatorDelayLowerBound @61 :Float32; # Gas/Brake actuator delay in seconds, lower bound
@@ -465,6 +483,7 @@ struct CarParams {
   carFw @44 :List(CarFw);
 
   radarTimeStep @45: Float32 = 0.05;  # time delta between radar updates, 20Hz is very standard
+																				   
   fingerprintSource @49: FingerprintSource;
   networkLocation @50 :NetworkLocation;  # Where Panda/C2 is integrated into the car's CAN network
   smartDsu @66: Bool;  # true if sDSU is detected
