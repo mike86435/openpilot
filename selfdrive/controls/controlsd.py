@@ -31,6 +31,8 @@ from selfdrive.manager.process_config import managed_processes
 SOFT_DISABLE_TIME = 3  # seconds
 LDW_MIN_SPEED = 31 * CV.MPH_TO_MS
 LANE_DEPARTURE_THRESHOLD = 0.1
+											  
+												 
 
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
@@ -102,6 +104,7 @@ class Controls:
     # read params
     self.is_metric = params.get_bool("IsMetric")
     self.is_ldw_enabled = params.get_bool("IsLdwEnabled")
+																		 
     openpilot_enabled_toggle = params.get_bool("OpenpilotEnabledToggle")
     passive = params.get_bool("Passive") or not openpilot_enabled_toggle
 
@@ -111,7 +114,11 @@ class Controls:
     car_recognized = self.CP.carName != 'mock'
 
     controller_available = self.CI.CC is not None and not passive and not self.CP.dashcamOnly
+													 
+																						
+																					   
     self.read_only = not car_recognized or not controller_available or self.CP.dashcamOnly
+																		  
     if self.read_only:
       safety_config = car.CarParams.SafetyConfig.new_message()
       safety_config.safetyModel = car.CarParams.SafetyModel.noOutput
@@ -148,10 +155,12 @@ class Controls:
     self.soft_disable_timer = 0
     self.v_cruise_kph = 255
     self.v_cruise_kph_last = 0
+    self.cruiseState_enabled_last = False										 
     self.mismatch_counter = 0
     self.cruise_mismatch_counter = 0
     self.can_rcv_error_counter = 0
     self.last_blinker_frame = 0
+							
     self.distance_traveled = 0
     self.last_functional_fan_frame = 0
     self.events_prev = []
@@ -170,6 +179,8 @@ class Controls:
 
     #if not sounds_available:
     #  self.events.add(EventName.soundsUnavailable, static=True)
+																				   
+																		
     if not car_recognized:
       self.events.add(EventName.carUnrecognized, static=True)
       if len(self.CP.carFw) > 0:
@@ -195,6 +206,8 @@ class Controls:
     """Compute carEvents from carState"""
 
     self.events.clear()
+									   
+																	 
 
     # Add startup event
     if self.startup_event is not None:
@@ -307,6 +320,9 @@ class Controls:
       self.events.add(EventName.posenetInvalid)
     if not self.sm['liveLocationKalman'].deviceStable:
       self.events.add(EventName.deviceFalling)
+											 
+																		
+												   
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM
@@ -324,6 +340,8 @@ class Controls:
 
     if TICI:
       for m in messaging.drain_sock(self.log_sock, wait_for_one=False):
+				   
+					
         try:
           msg = m.androidLog.message
           if any(err in msg for err in ("ERROR_CRC", "ERROR_ECC", "ERROR_STREAM_UNDERFLOW", "APPLY FAILED")):
@@ -333,6 +351,17 @@ class Controls:
               self.events.add(evt)
         except UnicodeDecodeError:
           pass
+
+																					  
+						  
+						  
+					
+
+												   
+																					
+																  
+							 
+								
 
     # TODO: fix simulator
     if not SIMULATION:
@@ -414,7 +443,7 @@ class Controls:
     # if stock cruise is completely disabled, then we can use our own set speed logic
     if not self.CP.pcmCruise:
       self.v_cruise_kph = update_v_cruise(self.v_cruise_kph, CS.buttonEvents, self.button_timers, self.enabled, self.is_metric)
-    elif CS.cruiseState.enabled:
+    elif self.CP.pcmCruise and CS.cruiseState.enabled:
       self.v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH
 
     # decrement the soft disable timer at every step, as it's reset on
@@ -473,7 +502,17 @@ class Controls:
           else:
             self.state = State.enabled
           self.current_alert_types.append(ET.ENABLE)
-          self.v_cruise_kph = initialize_v_cruise(CS.vEgo, CS.buttonEvents, self.v_cruise_kph_last)
+          if not self.CP.pcmCruise:
+            if CS.cruiseState.enabled:
+              self.v_cruise_kph = initialize_v_cruise(CS.vEgo, CS.buttonEvents, self.v_cruise_kph_last)
+          else:
+            self.v_cruise_kph = initialize_v_cruise(CS.vEgo, CS.buttonEvents, self.v_cruise_kph_last)
+
+    if not self.CP.pcmCruise:
+      if CS.cruiseState.enabled and not self.cruiseState_enabled_last:
+        self.v_cruise_kph = initialize_v_cruise(CS.vEgo, CS.buttonEvents, self.v_cruise_kph_last)
+
+      self.cruiseState_enabled_last = CS.cruiseState.enabled  															  
 
     # Check if actuators are enabled
     self.active = self.state == State.enabled or self.state == State.softDisabling
@@ -515,9 +554,10 @@ class Controls:
 
     if not self.joystick_mode:
       # accel PID loop
+      long_active = self.active and CS.cruiseState.enabled														  
       pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, self.v_cruise_kph * CV.KPH_TO_MS)
       t_since_plan = (self.sm.frame - self.sm.rcv_frame['longitudinalPlan']) * DT_CTRL
-      actuators.accel = self.LoC.update(self.active, CS, self.CP, long_plan, pid_accel_limits, t_since_plan)
+      actuators.accel = self.LoC.update(long_active, CS, self.CP, long_plan, pid_accel_limits, t_since_plan)
 
       # Steering PID loop and lateral MPC
       lat_active = self.active and not CS.steerWarning and not CS.steerError and CS.vEgo > self.CP.minSteerSpeed
@@ -541,9 +581,19 @@ class Controls:
         lac_log.output = steer
         lac_log.saturated = abs(steer) >= 0.9
 
+																				  
+																									
+																							  
+
+																																		 
+							   
+		 
+							  
+
     # Send a "steering required alert" if saturation count has reached the limit
     if lac_log.active and lac_log.saturated and not CS.steeringPressed:
       dpath_points = lat_plan.dPathPoints
+
       if len(dpath_points):
         # Check if we deviated from the path
         # TODO use desired vs actual curvature
@@ -588,7 +638,7 @@ class Controls:
       CC.roll = orientation_value[0]
       CC.pitch = orientation_value[1]
 
-    CC.cruiseControl.cancel = CS.cruiseState.enabled and (not self.enabled or not self.CP.pcmCruise)
+    CC.cruiseControl.cancel = CS.cruiseState.enabled and (not self.enabled)
     if self.joystick_mode and self.sm.rcv_frame['testJoystick'] > 0 and self.sm['testJoystick'].buttons[0]:
       CC.cruiseControl.cancel = True
 
@@ -612,6 +662,8 @@ class Controls:
       left_lane_visible = self.sm['lateralPlan'].lProb > 0.5
       l_lane_change_prob = desire_prediction[Desire.laneChangeLeft - 1]
       r_lane_change_prob = desire_prediction[Desire.laneChangeRight - 1]
+																										   
+																										   
 
       lane_lines = model_v2.laneLines
       l_lane_close = left_lane_visible and (lane_lines[1].y[0] > -(1.08 + CAMERA_OFFSET))
@@ -646,6 +698,8 @@ class Controls:
 
     # Curvature & Steering angle
     params = self.sm['liveParameters']
+																								 
+																			
 
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - params.angleOffsetDeg)
     curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, params.roll)
