@@ -27,6 +27,7 @@ class CarInterfaceBase(ABC):
   def __init__(self, CP, CarController, CarState):
     self.CP = CP
     self.VM = VehicleModel(CP)
+								 
 
     self.frame = 0
     self.steering_unpressed = 0
@@ -89,7 +90,10 @@ class CarInterfaceBase(ABC):
     ret.minEnableSpeed = -1. # enable is done by stock ACC, so ignore this
     ret.steerRatioRear = 0.  # no rear steering, at least on the listed cars aboveA
     ret.openpilotLongitudinalControl = False
+						 
+						 
     ret.stopAccel = -2.0
+																		   
     ret.stoppingDecelRate = 0.8 # brake_travel/s while trying to stop
     ret.vEgoStopping = 0.5
     ret.vEgoStarting = 0.5  # needs to be >= vEgoStopping to avoid state transition oscillation
@@ -121,11 +125,11 @@ class CarInterfaceBase(ABC):
       events.add(EventName.doorOpen)
     if cs_out.seatbeltUnlatched:
       events.add(EventName.seatbeltNotLatched)
-    if self.dragonconf.dpGearCheck and cs_out.gearShifter not in (GearShifter.drive, GearShifter.sport, GearShifter.eco, GearShifter.low) and (extra_gears is None or
-         cs_out.gearShifter not in extra_gears):
-      events.add(EventName.wrongGear)
-    if cs_out.gearShifter == GearShifter.reverse:
-      events.add(EventName.reverseGear)
+    if cs_out.gearShifter != GearShifter.drive and cs_out.gearShifter not in extra_gears and not (cs_out.gearShifter == GearShifter.unknown and self.gear_warning < int(0.5/DT_CTRL)):
+      if cs_out.gearShifter == GearShifter.park:
+        events.add(EventName.silentWrongGear)
+      else:
+        events.add(EventName.wrongGear)
     if not cs_out.cruiseState.available and not self.dragonconf.dpAtl:
       events.add(EventName.wrongCarMode)
     if cs_out.espDisabled:
@@ -141,7 +145,12 @@ class CarInterfaceBase(ABC):
     if cs_out.cruiseState.nonAdaptive and not self.dragonconf.dpAtl:
       events.add(EventName.wrongCruiseMode)
     if cs_out.brakeHoldActive and self.CP.openpilotLongitudinalControl:
+							  
+									  
+									  
       events.add(EventName.brakeHold)
+		   
+											 
 
     if (cs_out.leftBlinker or cs_out.rightBlinker) and self.dragonconf.dpLateralMode == 0:
       events.add(EventName.manualSteeringRequiredBlinkersOn)
@@ -156,6 +165,8 @@ class CarInterfaceBase(ABC):
         else:
           events.add(EventName.steerTempUnavailable)
       else:
+												  
+		 
         self.silent_steer_warning = False
       if cs_out.steerError:
         events.add(EventName.steerUnavailable)
@@ -171,7 +182,11 @@ class CarInterfaceBase(ABC):
     else:
       if (cs_out.gasPressed and not self.CS.out.gasPressed) or \
          (cs_out.brakePressed and (not self.CS.out.brakePressed or not cs_out.standstill)):
+									  
+									  
         events.add(EventName.pedalPressed)
+		   
+												
 
     # we engage when pcm is active (rising edge)
     if pcm_enable:
