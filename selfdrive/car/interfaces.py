@@ -145,12 +145,15 @@ class CarInterfaceBase(ABC):
     if cs_out.cruiseState.nonAdaptive and not self.dragonconf.dpAtl:
       events.add(EventName.wrongCruiseMode)
     if cs_out.brakeHoldActive and self.CP.openpilotLongitudinalControl:
-							  
-									  
-									  
-      events.add(EventName.brakeHold)
-		   
-											 
+      if (cs_out.lkasEnabled):
+        cs_out.disengageByBrake = True
+      if (cs_out.cruiseState.enabled):
+        events.add(EventName.brakeHold)
+      else:
+        events.add(EventName.silentBrakeHold)
+
+    self.gear_warning = self.gear_warning + 1 if cs_out.gearShifter == GearShifter.unknown else 0
+										 
 
     if (cs_out.leftBlinker or cs_out.rightBlinker) and self.dragonconf.dpLateralMode == 0:
       events.add(EventName.manualSteeringRequiredBlinkersOn)
@@ -184,9 +187,12 @@ class CarInterfaceBase(ABC):
          (cs_out.brakePressed and (not self.CS.out.brakePressed or not cs_out.standstill)):
 									  
 									  
+      if (cs_out.lkasEnabled):
+        cs_out.disengageByBrake = True
+      if (cs_out.cruiseState.enabled):
         events.add(EventName.pedalPressed)
-		   
-												
+      else:
+        events.add(EventName.silentPedalPressed)										
 
     # we engage when pcm is active (rising edge)
     if pcm_enable:
