@@ -18,10 +18,8 @@ def get_lkas_cmd_bus(car_fingerprint, radar_disabled=False):
   # normally steering commands are sent to radar, which forwards them to powertrain bus
   return 0
 
-def create_brake_command(packer, apply_brake, pcm_override, pcm_cancel_cmd, fcw, idx, car_fingerprint, stock_brake, brake_active):
+def create_brake_command(packer, apply_brake, pcm_override, pcm_cancel_cmd, fcw, idx, car_fingerprint, stock_brake):
   # TODO: do we loose pressure if we keep pump off for long?
-  if not brake_active:
-    apply_brake = 0
   pump_on = apply_brake > 0 
   brakelights = apply_brake > 0
   brake_rq = apply_brake > 0
