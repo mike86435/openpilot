@@ -178,7 +178,6 @@ class CarController():
     lkas_active = enabled and not CS.steer_not_allowed and CS.lkMode
 
     # Send CAN commands.
-    brake_active = CS.brakeToggle
     can_sends = []
 
     # tester present - w/ no response (keeps radar disabled)
@@ -281,7 +280,7 @@ class CarController():
 
           pcm_override = True
           can_sends.append(hondacan.create_brake_command(self.packer, apply_brake,
-            pcm_override, pcm_cancel_cmd, fcw_display, idx, CS.CP.carFingerprint, brake_active))
+            pcm_override, pcm_cancel_cmd, fcw_display, idx, CS.CP.carFingerprint, CS.stock_brake))
           self.apply_brake_last = apply_brake
           self.brake = apply_brake / P.NIDEC_BRAKE_MAX
 
