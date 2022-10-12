@@ -1,19 +1,22 @@
 # python library to interface with panda
-import datetime
+import os
+import sys
+import time
+import usb1
 import struct
 import hashlib
-import usb1
-import os
-import time
+import datetime
 import traceback
-import sys
+import warnings
 from functools import wraps
+from typing import Optional
+from itertools import accumulate
 from .dfu import PandaDFU, MCU_TYPE_F2, MCU_TYPE_F4, MCU_TYPE_H7  # pylint: disable=import-error
 from .flash_release import flash_release  # noqa pylint: disable=import-error
 from .update import ensure_st_up_to_date  # noqa pylint: disable=import-error
 from .serial import PandaSerial  # noqa pylint: disable=import-error
 from .isotp import isotp_send, isotp_recv  # pylint: disable=import-error
-from .config import DEFAULT_FW_FN, DEFAULT_H7_FW_FN  # noqa pylint: disable=import-error
+from .config import DEFAULT_FW_FN, DEFAULT_H7_FW_FN, SECTOR_SIZES_FX, SECTOR_SIZES_H7  # noqa pylint: disable=import-error
 
 __version__ = '0.0.10'
 
@@ -114,7 +117,23 @@ def ensure_can_packet_version(fn):
     return fn(self, *args, **kwargs)
   return wrapper
 
-class Panda(object):
+def ensure_can_health_packet_version(fn):
+  @wraps(fn)
+  def wrapper(self, *args, **kwargs):
+    if self.can_health_version < self.CAN_HEALTH_PACKET_VERSION:
+      raise RuntimeError("Panda firmware has outdated CAN health packet definition. Reflash panda firmware.")
+    elif self.can_health_version > self.CAN_HEALTH_PACKET_VERSION:
+      raise RuntimeError("Panda python library has outdated CAN health packet definition. Update panda python library.")
+    return fn(self, *args, **kwargs)
+  return wrapper
+
+class ALTERNATIVE_EXPERIENCE:
+  DEFAULT = 0
+  DISABLE_DISENGAGE_ON_GAS = 1
+  DISABLE_STOCK_AEB = 2
+  RAISE_LONGITUDINAL_LIMITS_TO_ISO_MAX = 8
+
+class Panda:
 
   # matches cereal.car.CarParams.SafetyModel
   SAFETY_SILENT = 0
@@ -138,6 +157,11 @@ class Panda(object):
   SAFETY_VOLKSWAGEN_PQ = 21
   SAFETY_SUBARU_LEGACY = 22
   SAFETY_HYUNDAI_LEGACY = 23
+  SAFETY_HYUNDAI_COMMUNITY = 24
+  SAFETY_STELLANTIS = 25
+  SAFETY_FAW = 26
+  SAFETY_BODY = 27
+  SAFETY_HYUNDAI_CANFD = 28
 
   SERIAL_DEBUG = 0
   SERIAL_ESP = 1
@@ -158,33 +182,63 @@ class Panda(object):
   HW_TYPE_UNO = b'\x05'
   HW_TYPE_DOS = b'\x06'
   HW_TYPE_RED_PANDA = b'\x07'
+  HW_TYPE_RED_PANDA_V2 = b'\x08'
 
   CAN_PACKET_VERSION = 2
-  HEALTH_PACKET_VERSION = 3
-  HEALTH_STRUCT = struct.Struct("<IIIIIIIIBBBBBBBHBBBHI")
+  HEALTH_PACKET_VERSION = 11
+  CAN_HEALTH_PACKET_VERSION = 2
+  HEALTH_STRUCT = struct.Struct("<IIIIIIIIIBBBBBBHBBBHfBB")
+  CAN_HEALTH_STRUCT = struct.Struct("<BIBBBBBBBBIIIIIIHHBB")
 
-  F2_DEVICES = [HW_TYPE_PEDAL]
-  F4_DEVICES = [HW_TYPE_WHITE_PANDA, HW_TYPE_GREY_PANDA, HW_TYPE_BLACK_PANDA, HW_TYPE_UNO, HW_TYPE_DOS]
-  H7_DEVICES = [HW_TYPE_RED_PANDA]
+  F2_DEVICES = (HW_TYPE_PEDAL, )
+  F4_DEVICES = (HW_TYPE_WHITE_PANDA, HW_TYPE_GREY_PANDA, HW_TYPE_BLACK_PANDA, HW_TYPE_UNO, HW_TYPE_DOS)
+  H7_DEVICES = (HW_TYPE_RED_PANDA, HW_TYPE_RED_PANDA_V2)
+
+  INTERNAL_DEVICES = (HW_TYPE_UNO, HW_TYPE_DOS)
+  HAS_OBD = (HW_TYPE_BLACK_PANDA, HW_TYPE_UNO, HW_TYPE_DOS, HW_TYPE_RED_PANDA, HW_TYPE_RED_PANDA_V2)
 
   CLOCK_SOURCE_MODE_DISABLED = 0
   CLOCK_SOURCE_MODE_FREE_RUNNING = 1
 
+  # first byte is for EPS scaling factor
+  FLAG_TOYOTA_ALT_BRAKE = (1 << 8)
+  FLAG_TOYOTA_STOCK_LONGITUDINAL = (2 << 8)
+
   FLAG_HONDA_ALT_BRAKE = 1
   FLAG_HONDA_BOSCH_LONG = 2
   FLAG_HONDA_NIDEC_ALT = 4
+  FLAG_HONDA_RADARLESS = 8
 
   FLAG_HYUNDAI_EV_GAS = 1
   FLAG_HYUNDAI_HYBRID_GAS = 2
   FLAG_HYUNDAI_LONG = 4
+  FLAG_HYUNDAI_CAMERA_SCC = 8
+
+  FLAG_HYUNDAI_CANFD_HDA2 = 1
+  FLAG_HYUNDAI_CANFD_ALT_BUTTONS = 2
+
   FLAG_TESLA_POWERTRAIN = 1
   FLAG_TESLA_LONG_CONTROL = 2
 
-  def __init__(self, serial=None, claim=True):
+  FLAG_VOLKSWAGEN_LONG_CONTROL = 1
+
+  FLAG_CHRYSLER_RAM_DT = 1
+  FLAG_CHRYSLER_RAM_HD = 2
+
+  FLAG_SUBARU_GEN2 = 1
+
+  FLAG_GM_HW_CAM = 1
+
+  def __init__(self, serial: Optional[str] = None, claim: bool = True, disable_checks: bool = True):
     self._serial = serial
+    self._disable_checks = disable_checks
+
     self._handle = None
+    self._bcd_device = None
+
+    # connect and set mcu type
     self.connect(claim)
-    self._mcu_type = self.get_mcu_type()
+
 
   def close(self):
     self._handle.close()
@@ -200,7 +254,7 @@ class Panda(object):
     while 1:
       try:
         for device in context.getDeviceList(skip_on_error=True):
-          if device.getVendorID() == 0xbbaa and device.getProductID() in [0xddcc, 0xddee]:
+          if device.getVendorID() == 0xbbaa and device.getProductID() in (0xddcc, 0xddee):
             try:
               this_serial = device.getSerialNumber()
             except Exception:
@@ -210,11 +264,17 @@ class Panda(object):
               print("opening device", self._serial, hex(device.getProductID()))
               self.bootstub = device.getProductID() == 0xddee
               self._handle = device.open()
-              if sys.platform not in ["win32", "cygwin", "msys", "darwin"]:
+              if sys.platform not in ("win32", "cygwin", "msys", "darwin"):
                 self._handle.setAutoDetachKernelDriver(True)
               if claim:
                 self._handle.claimInterface(0)
                 # self._handle.setInterfaceAltSetting(0, 0)  # Issue in USB stack
+
+              # bcdDevice wasn't always set to the hw type, ignore if it's the old constant
+              bcd = device.getbcdDevice()
+              if bcd is not None and bcd != 0x2300:
+                self._bcd_device = bytearray([bcd >> 8, ])
+
               break
       except Exception as e:
         print("exception", e)
@@ -222,11 +282,18 @@ class Panda(object):
       if not wait or self._handle is not None:
         break
       context = usb1.USBContext()  # New context needed so new devices show up
-    assert(self._handle is not None)
-    self.health_version, self.can_version = self.get_packets_versions()
+
+    assert self._handle is not None
+    self._mcu_type = self.get_mcu_type()
+    self.health_version, self.can_version, self.can_health_version = self.get_packets_versions()
     print("connected")
 
-  def reset(self, enter_bootstub=False, enter_bootloader=False):
+    # disable openpilot's heartbeat checks
+    if self._disable_checks:
+      self.set_heartbeat_disabled()
+      self.set_power_save(0)
+
+  def reset(self, enter_bootstub=False, enter_bootloader=False, reconnect=True):
     try:
       if enter_bootloader:
         self._handle.controlWrite(Panda.REQUEST_IN, 0xd1, 0, 0, b'')
@@ -237,12 +304,14 @@ class Panda(object):
           self._handle.controlWrite(Panda.REQUEST_IN, 0xd8, 0, 0, b'')
     except Exception:
       pass
-    if not enter_bootloader:
+    if not enter_bootloader and reconnect:
       self.reconnect()
 
   def reconnect(self):
-    self.close()
-    time.sleep(1.0)
+    if self._handle is not None:
+      self.close()
+      time.sleep(1.0)
+
     success = False
     # wait up to 15 seconds
     for i in range(0, 15):
@@ -264,18 +333,26 @@ class Panda(object):
 
 
   @staticmethod
-  def flash_static(handle, code):
+  def flash_static(handle, code, mcu_type):
+    assert mcu_type is not None, "must set valid mcu_type to flash"
+
     # confirm flasher is present
     fr = handle.controlRead(Panda.REQUEST_IN, 0xb0, 0, 0, 0xc)
     assert fr[4:8] == b"\xde\xad\xd0\x0d"
+
+    # determine sectors to erase
+    apps_sectors_cumsum = accumulate(SECTOR_SIZES_H7[1:] if mcu_type == MCU_TYPE_H7 else SECTOR_SIZES_FX[1:])
+    last_sector = next((i + 1 for i, v in enumerate(apps_sectors_cumsum) if v > len(code)), -1)
+    assert last_sector >= 1, "Binary too small? No sector to erase."
+    assert last_sector < 7, "Binary too large! Risk of overwriting provisioning chunk."
 
     # unlock flash
     print("flash: unlocking")
     handle.controlWrite(Panda.REQUEST_IN, 0xb1, 0, 0, b'')
 
-    # erase sectors 1 through 3
-    print("flash: erasing")
-    for i in range(1, 4):
+    # erase sectors
+    print(f"flash: erasing sectors 1 - {last_sector}")
+    for i in range(1, last_sector + 1):
       handle.controlWrite(Panda.REQUEST_IN, 0xb2, i, 0, b'')
 
     # flash over EP2
@@ -291,9 +368,10 @@ class Panda(object):
     except Exception:
       pass
 
-  def flash(self, fn=DEFAULT_FW_FN, code=None, reconnect=True):
-    if self._mcu_type == MCU_TYPE_H7 and fn == DEFAULT_FW_FN:
-      fn = DEFAULT_H7_FW_FN
+  def flash(self, fn=None, code=None, reconnect=True):
+    if not fn:
+      fn = DEFAULT_H7_FW_FN if self._mcu_type == MCU_TYPE_H7 else DEFAULT_FW_FN
+    assert os.path.isfile(fn)
     print("flash: main version is " + self.get_version())
     if not self.bootstub:
       self.reset(enter_bootstub=True)
@@ -307,23 +385,23 @@ class Panda(object):
     print("flash: bootstub version is " + self.get_version())
 
     # do flash
-    Panda.flash_static(self._handle, code)
+    Panda.flash_static(self._handle, code, mcu_type=self._mcu_type)
 
     # reconnect
     if reconnect:
       self.reconnect()
 
-  def recover(self, timeout=None):
-    self.reset(enter_bootstub=True)
-    self.reset(enter_bootloader=True)
-    t_start = time.time()
-    while len(PandaDFU.list()) == 0:
-      print("waiting for DFU...")
-      time.sleep(0.1)
-      if timeout is not None and (time.time() - t_start) > timeout:
-        return False
+  def recover(self, timeout: Optional[int] = None, reset: bool = True) -> bool:
+    dfu_serial = PandaDFU.st_serial_to_dfu_serial(self._serial, self._mcu_type)
 
-    dfu = PandaDFU(PandaDFU.st_serial_to_dfu_serial(self._serial, self._mcu_type))
+    if reset:
+      self.reset(enter_bootstub=True)
+      self.reset(enter_bootloader=True)
+
+    if not self.wait_for_dfu(dfu_serial, timeout=timeout):
+      return False
+
+    dfu = PandaDFU(dfu_serial)
     dfu.recover()
 
     # reflash after recover
@@ -332,14 +410,28 @@ class Panda(object):
     return True
 
   @staticmethod
+  def wait_for_dfu(dfu_serial: str, timeout: Optional[int] = None) -> bool:
+    t_start = time.monotonic()
+    while dfu_serial not in PandaDFU.list():
+      print("waiting for DFU...")
+      time.sleep(0.1)
+      if timeout is not None and (time.monotonic() - t_start) > timeout:
+        return False
+    return True
+
+  @staticmethod
   def list():
     context = usb1.USBContext()
     ret = []
     try:
       for device in context.getDeviceList(skip_on_error=True):
-        if device.getVendorID() == 0xbbaa and device.getProductID() in [0xddcc, 0xddee]:
+        if device.getVendorID() == 0xbbaa and device.getProductID() in (0xddcc, 0xddee):
           try:
-            ret.append(device.getSerialNumber())
+            serial = device.getSerialNumber()
+            if len(serial) == 24:
+              ret.append(serial)
+            else:
+              warnings.warn(f"found device with panda descriptors but invalid serial: {serial}", RuntimeWarning)
           except Exception:
             continue
     except Exception:
@@ -359,24 +451,63 @@ class Panda(object):
       "uptime": a[0],
       "voltage": a[1],
       "current": a[2],
-      "can_rx_errs": a[3],
-      "can_send_errs": a[4],
-      "can_fwd_errs": a[5],
-      "gmlan_send_errs": a[6],
-      "faults": a[7],
-      "ignition_line": a[8],
-      "ignition_can": a[9],
-      "controls_allowed": a[10],
-      "gas_interceptor_detected": a[11],
-      "car_harness_status": a[12],
-      "usb_power_mode": a[13],
+      "safety_tx_blocked": a[3],
+      "safety_rx_invalid": a[4],
+      "tx_buffer_overflow": a[5],
+      "rx_buffer_overflow": a[6],
+      "gmlan_send_errs": a[7],
+      "faults": a[8],
+      "ignition_line": a[9],
+      "ignition_can": a[10],
+      "controls_allowed": a[11],
+      "gas_interceptor_detected": a[12],
+      "car_harness_status": a[13],
       "safety_mode": a[14],
       "safety_param": a[15],
       "fault_status": a[16],
       "power_save_enabled": a[17],
       "heartbeat_lost": a[18],
-      "unsafe_mode": a[19],
-      "blocked_msg_cnt": a[20],
+      "alternative_experience": a[19],
+      "interrupt_load": a[20],
+      "fan_power": a[21],
+      "safety_rx_checks_invalid": a[22],
+    }
+
+  @ensure_can_health_packet_version
+  def can_health(self, can_number):
+    LEC_ERROR_CODE = {
+      0: "No error",
+      1: "Stuff error",
+      2: "Form error",
+      3: "AckError",
+      4: "Bit1Error",
+      5: "Bit0Error",
+      6: "CRCError",
+      7: "NoChange",
+    }
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xc2, int(can_number), 0, self.CAN_HEALTH_STRUCT.size)
+    a = self.CAN_HEALTH_STRUCT.unpack(dat)
+    return {
+      "bus_off": a[0],
+      "bus_off_cnt": a[1],
+      "error_warning": a[2],
+      "error_passive": a[3],
+      "last_error": LEC_ERROR_CODE[a[4]],
+      "last_stored_error": LEC_ERROR_CODE[a[5]],
+      "last_data_error": LEC_ERROR_CODE[a[6]],
+      "last_data_stored_error": LEC_ERROR_CODE[a[7]],
+      "receive_error_cnt": a[8],
+      "transmit_error_cnt": a[9],
+      "total_error_cnt": a[10],
+      "total_tx_lost_cnt": a[11],
+      "total_rx_lost_cnt": a[12],
+      "total_tx_cnt": a[13],
+      "total_rx_cnt": a[14],
+      "total_fwd_cnt": a[15],
+      "can_speed": a[16],
+      "can_data_speed": a[17],
+      "canfd_enabled": a[18],
+      "brs_enabled": a[19],
     }
 
   # ******************* control *******************
@@ -391,7 +522,7 @@ class Panda(object):
     return self._handle.controlRead(Panda.REQUEST_IN, 0xd6, 0, 0, 0x40).decode('utf8')
 
   @staticmethod
-  def get_signature_from_firmware(fn):
+  def get_signature_from_firmware(fn) -> bytes:
     f = open(fn, 'rb')
     f.seek(-128, 2)  # Seek from end of file
     return f.read(128)
@@ -402,37 +533,23 @@ class Panda(object):
     return bytes(part_1 + part_2)
 
   def get_type(self):
-    return self._handle.controlRead(Panda.REQUEST_IN, 0xc1, 0, 0, 0x40)
+    ret = self._handle.controlRead(Panda.REQUEST_IN, 0xc1, 0, 0, 0x40)
+
+    # bootstub doesn't implement this call, so fallback to bcdDevice
+    invalid_type = self.bootstub and (ret is None or len(ret) != 1)
+    if invalid_type and self._bcd_device is not None:
+      ret = self._bcd_device
+
+    return ret
 
   # Returns tuple with health packet version and CAN packet/USB packet version
   def get_packets_versions(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xdd, 0, 0, 2)
-    if dat:
-      a = struct.unpack("BB", dat)
-      return (a[0], a[1])
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xdd, 0, 0, 3)
+    if dat and len(dat) == 3:
+      a = struct.unpack("BBB", dat)
+      return (a[0], a[1], a[2])
     else:
-      return (0, 0)
-
-  def is_white(self):
-    return self.get_type() == Panda.HW_TYPE_WHITE_PANDA
-
-  def is_grey(self):
-    return self.get_type() == Panda.HW_TYPE_GREY_PANDA
-
-  def is_black(self):
-    return self.get_type() == Panda.HW_TYPE_BLACK_PANDA
-
-  def is_pedal(self):
-    return self.get_type() == Panda.HW_TYPE_PEDAL
-
-  def is_uno(self):
-    return self.get_type() == Panda.HW_TYPE_UNO
-
-  def is_dos(self):
-    return self.get_type() == Panda.HW_TYPE_DOS
-
-  def is_red(self):
-    return self.get_type() == Panda.HW_TYPE_RED_PANDA
+      return (0, 0, 0)
 
   def get_mcu_type(self):
     hw_type = self.get_type()
@@ -445,13 +562,10 @@ class Panda(object):
     return None
 
   def has_obd(self):
-    return (self.is_uno() or self.is_dos() or self.is_black() or self.is_red())
-
-  def has_canfd(self):
-    return self._mcu_type in Panda.H7_DEVICES
+    return self.get_type() in Panda.HAS_OBD
 
   def is_internal(self):
-    return self.get_type() in [Panda.HW_TYPE_UNO, Panda.HW_TYPE_DOS]
+    return self.get_type() in Panda.INTERNAL_DEVICES
 
   def get_serial(self):
     dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd0, 0, 0, 0x20)
@@ -473,6 +587,9 @@ class Panda(object):
   def set_power_save(self, power_save_enabled=0):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xe7, int(power_save_enabled), 0, b'')
 
+  def enable_deepsleep(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xfb, 0, 0, b'')
+
   def set_esp_power(self, on):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xd9, int(on), 0, b'')
 
@@ -480,17 +597,14 @@ class Panda(object):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xda, int(bootmode), 0, b'')
     time.sleep(0.2)
 
-  def set_safety_mode(self, mode=SAFETY_SILENT, disable_checks=True):
-    self._handle.controlWrite(Panda.REQUEST_OUT, 0xdc, mode, 0, b'')
-    if disable_checks:
-      self.set_heartbeat_disabled()
-      self.set_power_save(0)
+  def set_safety_mode(self, mode=SAFETY_SILENT, param=0):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xdc, mode, param, b'')
 
   def set_gmlan(self, bus=2):
     # TODO: check panda type
     if bus is None:
       self._handle.controlWrite(Panda.REQUEST_OUT, 0xdb, 0, 0, b'')
-    elif bus in [Panda.GMLAN_CAN2, Panda.GMLAN_CAN3]:
+    elif bus in (Panda.GMLAN_CAN2, Panda.GMLAN_CAN3):
       self._handle.controlWrite(Panda.REQUEST_OUT, 0xdb, 1, bus, b'')
 
   def set_obd(self, obd):
@@ -511,7 +625,7 @@ class Panda(object):
   def set_can_data_speed_kbps(self, bus, speed):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xf9, bus, int(speed * 10), b'')
 
-    # CAN FD and BRS status
+  # CAN FD and BRS status
   def get_canfd_status(self, bus):
     dat = self._handle.controlRead(Panda.REQUEST_IN, 0xfa, bus, 0, 2)
     if dat:

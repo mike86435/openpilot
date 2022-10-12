@@ -12,6 +12,8 @@
 #include "power_saving.h"
 #include "safety.h"
 
+#include "health.h"
+
 #include "drivers/can_common.h"
 
 #ifdef STM32H7
@@ -22,13 +24,15 @@
 
 #include "obj/gitversion.h"
 
-#include "usb_comms.h"
+#include "main_comms.h"
 
 
 // ********************* Serial debugging *********************
 
 bool check_started(void) {
-  return current_board->check_ignition() || ignition_can;
+  bool started = current_board->check_ignition() || ignition_can;
+  ignition_seen |= started;
+  return started;
 }
 
 void debug_ring_callback(uart_ring *ring) {
@@ -49,33 +53,19 @@ void debug_ring_callback(uart_ring *ring) {
     if (rcv == 'x') {
       NVIC_SystemReset();
     }
-
-    // enable CDP mode
-    if (rcv == 'C') {
-      puts("switching USB to CDP mode\n");
-      current_board->set_usb_power_mode(USB_POWER_CDP);
-    }
-    if (rcv == 'c') {
-      puts("switching USB to client mode\n");
-      current_board->set_usb_power_mode(USB_POWER_CLIENT);
-    }
-    if (rcv == 'D') {
-      puts("switching USB to DCP mode\n");
-      current_board->set_usb_power_mode(USB_POWER_DCP);
-    }
   }
 }
 
 // ****************************** safety mode ******************************
 
 // this is the only way to leave silent mode
-void set_safety_mode(uint16_t mode, int16_t param) {
+void set_safety_mode(uint16_t mode, uint16_t param) {
   uint16_t mode_copy = mode;
   int err = set_safety_hooks(mode_copy, param);
   if (err == -1) {
     puts("Error: safety set mode failed. Falling back to SILENT\n");
     mode_copy = SAFETY_SILENT;
-    err = set_safety_hooks(mode_copy, 0);
+    err = set_safety_hooks(mode_copy, 0U);
     if (err == -1) {
       puts("Error: Failed setting SILENT mode. Hanging\n");
       while (true) {
@@ -83,7 +73,8 @@ void set_safety_mode(uint16_t mode, int16_t param) {
       }
     }
   }
-  blocked_msg_cnt = 0;
+  safety_tx_blocked = 0;
+  safety_rx_invalid = 0;
 
   switch (mode_copy) {
     case SAFETY_SILENT:
@@ -105,7 +96,7 @@ void set_safety_mode(uint16_t mode, int16_t param) {
       heartbeat_counter = 0U;
       heartbeat_lost = false;
       if (current_board->has_obd) {
-        if (param == 0) {
+        if (param == 0U) {
           current_board->set_can_mode(CAN_MODE_OBD_CAN2);
         } else {
           current_board->set_can_mode(CAN_MODE_NORMAL);
@@ -129,6 +120,7 @@ void set_safety_mode(uint16_t mode, int16_t param) {
 bool is_car_safety_mode(uint16_t mode) {
   return (mode != SAFETY_SILENT) &&
          (mode != SAFETY_NOOUTPUT) &&
+         (mode != SAFETY_ALLOUTPUT) &&
          (mode != SAFETY_ELM327);
 }
 
@@ -155,11 +147,12 @@ void tick_handler(void) {
     // siren
     current_board->set_siren((loop_counter & 1U) && (siren_enabled || (siren_countdown > 0U)));
 
+    // tick drivers at 8Hz
+    fan_tick();
+
     // decimated to 1Hz
     if (loop_counter == 0U) {
       can_live = pending_can_live;
-
-      current_board->usb_power_mode_tick(uptime_cnt);
 
       //puth(usart1_dma); puts(" "); puth(DMA2_Stream5->M0AR); puts(" "); puth(DMA2_Stream5->NDTR); puts("\n");
 
@@ -175,9 +168,6 @@ void tick_handler(void) {
         puts("tx3:"); puth4(can_tx3_q.r_ptr); puts("-"); puth4(can_tx3_q.w_ptr); puts("\n");
       #endif
 
-      // Tick drivers
-      fan_tick();
-
       // set green LED to be controls allowed
       current_board->set_led(LED_GREEN, controls_allowed | green_led_enabled);
 
@@ -185,9 +175,18 @@ void tick_handler(void) {
       // unless we are in power saving mode
       current_board->set_led(LED_BLUE, (uptime_cnt & 1U) && (power_save_status == POWER_SAVE_STATUS_ENABLED));
 
+      // tick drivers at 1Hz
+      const bool recent_heartbeat = heartbeat_counter == 0U;
+      current_board->board_tick(check_started(), usb_enumerated, recent_heartbeat);
+
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < __UINT32_MAX__) {
         heartbeat_counter += 1U;
+      }
+
+      // disabling heartbeat not allowed while in safety mode
+      if (is_car_safety_mode(current_safety_mode)) {
+        heartbeat_disabled = false;
       }
 
       if (siren_countdown > 0U) {
@@ -221,6 +220,7 @@ void tick_handler(void) {
           puth(heartbeat_counter);
           puts(" seconds. Safety is set to SILENT mode.\n");
 
+          #ifdef HEARTBEAT_CHECK
           if (controls_allowed_countdown > 0U) {
             siren_countdown = 5U;
             controls_allowed_countdown = 0U;
@@ -230,6 +230,7 @@ void tick_handler(void) {
           if (is_car_safety_mode(current_safety_mode)) {
             heartbeat_lost = true;
           }
+          #endif
 
           if (current_safety_mode != SAFETY_SILENT) {
             set_safety_mode(SAFETY_SILENT, 0U);
@@ -243,15 +244,10 @@ void tick_handler(void) {
 
           // If enumerated but no heartbeat (phone up, boardd not running), turn the fan on to cool the device
           if(usb_enumerated){
-            current_board->set_fan_power(50U);
+            fan_set_power(50U);
           } else {
-            current_board->set_fan_power(0U);
+            fan_set_power(0U);
           }
-        }
-
-        // enter CDP mode when car starts to ensure we are charging a turned off EON
-        if (check_started() && (usb_power_mode != USB_POWER_CDP)) {
-          current_board->set_usb_power_mode(USB_POWER_CDP);
         }
       }
 
@@ -276,6 +272,37 @@ void tick_handler(void) {
     loop_counter %= 8U;
   }
   TICK_TIMER->SR = 0;
+}
+
+void EXTI_IRQ_Handler(void) {
+  if (check_exti_irq()) {
+    exti_irq_clear();
+    clock_init();
+
+    set_power_save_state(POWER_SAVE_STATUS_DISABLED);
+    deepsleep_allowed = false;
+    heartbeat_counter = 0U;
+    usb_soft_disconnect(false);
+
+    NVIC_EnableIRQ(TICK_TIMER_IRQ);
+  }
+}
+
+uint8_t rtc_counter = 0;
+void RTC_WKUP_IRQ_Handler(void) {
+  exti_irq_clear();
+  clock_init();
+
+  rtc_counter++;
+  if ((rtc_counter % 2U) == 0U) {
+    current_board->set_led(LED_BLUE, false);
+  } else {
+    current_board->set_led(LED_BLUE, true);
+  }
+
+  if (rtc_counter == __UINT8_MAX__) {
+    rtc_counter = 1U;
+  }
 }
 
 
@@ -337,7 +364,7 @@ int main(void) {
   microsecond_timer_init();
 
   // init to SILENT and can silent
-  set_safety_mode(SAFETY_SILENT, 0);
+  set_safety_mode(SAFETY_SILENT, 0U);
 
   // enable CAN TXs
   current_board->enable_can_transceivers(true);
@@ -361,19 +388,17 @@ int main(void) {
   for (cnt=0;;cnt++) {
     if (power_save_status == POWER_SAVE_STATUS_DISABLED) {
       #ifdef DEBUG_FAULTS
-      if(fault_status == FAULT_STATUS_NONE){
+      if (fault_status == FAULT_STATUS_NONE) {
       #endif
-        uint32_t div_mode = ((usb_power_mode == USB_POWER_DCP) ? 4U : 1U);
-
         // useful for debugging, fade breaks = panda is overloaded
-        for(uint32_t fade = 0U; fade < MAX_LED_FADE; fade += div_mode){
+        for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
           current_board->set_led(LED_RED, true);
           delay(fade >> 4);
           current_board->set_led(LED_RED, false);
           delay((MAX_LED_FADE - fade) >> 4);
         }
 
-        for(uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= div_mode){
+        for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
           current_board->set_led(LED_RED, true);
           delay(fade >> 4);
           current_board->set_led(LED_RED, false);
@@ -389,7 +414,24 @@ int main(void) {
         }
       #endif
     } else {
+      if (deepsleep_allowed && !usb_enumerated && !check_started() && ignition_seen && (heartbeat_counter > 20U)) {
+        usb_soft_disconnect(true);
+        fan_set_power(0U);
+        NVIC_DisableIRQ(TICK_TIMER_IRQ);
+        delay(512000U);
+
+        // Init IRQs for CAN transceiver and ignition line
+        exti_irq_init();
+
+        // Init RTC Wakeup event on EXTI22
+        REGISTER_INTERRUPT(RTC_WKUP_IRQn, RTC_WKUP_IRQ_Handler, 10U, FAULT_INTERRUPT_RATE_EXTI)
+        rtc_wakeup_init();
+
+        // STOP mode
+        SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
+      }
       __WFI();
+      SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
     }
   }
 

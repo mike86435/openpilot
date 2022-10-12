@@ -90,14 +90,7 @@ static int nissan_rx_hook(CANPacket_t *to_push) {
     // Handle cruise enabled
     if ((addr == 0x30f) && (((bus == 2) && (!nissan_alt_eps)) || ((bus == 1) && (nissan_alt_eps)))) {
       bool cruise_engaged = (GET_BYTE(to_push, 0) >> 3) & 1U;
-
-      if (cruise_engaged && !cruise_engaged_prev) {
-        controls_allowed = 1;
-      }
-      if (!cruise_engaged) {
-        controls_allowed = 0;
-      }
-      cruise_engaged_prev = cruise_engaged;
+      pcm_cruise_check(cruise_engaged);
     }
 
     generic_rx_checks((addr == 0x169) && (bus == 0));
@@ -106,7 +99,9 @@ static int nissan_rx_hook(CANPacket_t *to_push) {
 }
 
 
-static int nissan_tx_hook(CANPacket_t *to_send) {
+static int nissan_tx_hook(CANPacket_t *to_send, bool longitudinal_allowed) {
+  UNUSED(longitudinal_allowed);
+
   int tx = 1;
   int addr = GET_ADDR(to_send);
   bool violation = 0;
@@ -158,7 +153,6 @@ static int nissan_tx_hook(CANPacket_t *to_send) {
   }
 
   if (violation) {
-    controls_allowed = 0;
     tx = 0;
   }
 
@@ -188,10 +182,8 @@ static int nissan_fwd_hook(int bus_num, CANPacket_t *to_fwd) {
   return bus_fwd;
 }
 
-static const addr_checks* nissan_init(int16_t param) {
-  controls_allowed = 0;
+static const addr_checks* nissan_init(uint16_t param) {
   nissan_alt_eps = param ? 1 : 0;
-  relay_malfunction_reset();
   return &nissan_rx_checks;
 }
 
