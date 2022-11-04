@@ -77,7 +77,7 @@ def get_can_signals(CP, gearbox_msg, main_on_sig_msg):
     signals.append(("BRAKE_PRESSED", "BRAKE_MODULE"))
     checks.append(("BRAKE_MODULE", 50))
 
-  if CP.carFingerprint in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY, CAR.ODYSSEY_CHN}):
+  if CP.carFingerprint in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY, CAR.ODYSSEY_CHN, CAR.CLARITY}):
     signals.append(("EPB_STATE", "EPB_STATUS"))
     checks.append(("EPB_STATUS", 50))
     
