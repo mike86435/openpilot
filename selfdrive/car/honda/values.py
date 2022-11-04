@@ -141,6 +141,7 @@ CAR_INFO: Dict[str, Optional[Union[HondaCarInfo, List[HondaCarInfo]]]] = {
   CAR.RIDGELINE: HondaCarInfo("Honda Ridgeline 2017-22", min_steer_speed=12. * CV.MPH_TO_MS, harness=Harness.nidec),
   CAR.INSIGHT: HondaCarInfo("Honda Insight 2019-22", "All", min_steer_speed=3. * CV.MPH_TO_MS, harness=Harness.bosch_a),
   CAR.HONDA_E: HondaCarInfo("Honda e 2020", "All", min_steer_speed=3. * CV.MPH_TO_MS, harness=Harness.bosch_a),
+  CAR.CLARITY: HondaCarInfo("Honda Clarity 2018", harness=Harness.nidec),
 }
 
 FW_QUERY_CONFIG = FwQueryConfig(
