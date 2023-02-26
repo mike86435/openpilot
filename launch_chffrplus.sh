@@ -167,10 +167,10 @@ function two_init {
     tar -zxvf "$LIB_PATH/$MODULE.tar.gz" -C "$PY_LIB_DEST/"
   fi
   # panda
-  if [ ! -f "$PY_LIB_DEST/spidev.cpython-38.so" ]; then
-    echo "Installing spidev.cpython-38.so..."
-    cp -f "$LIB_PATH/spidev.cpython-38.so" "$PY_LIB_DEST/"
-  fi
+#  if [ ! -f "$PY_LIB_DEST/spidev.cpython-38.so" ]; then
+#    echo "Installing spidev.cpython-38.so..."
+#    cp -f "$LIB_PATH/spidev.cpython-38.so" "$PY_LIB_DEST/"
+#  fi
   mount -o remount,r /system
 
   # Check for NEOS update
