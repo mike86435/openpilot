@@ -44,14 +44,11 @@ class Resetter():
 
   def cycle_power(self, delay=5, ports=None):
     if ports is None:
-      ports = [1, 2, 3]
-
+      ports = [1,2,3]
     for port in ports:
       self.enable_power(port, False)
-
     time.sleep(1)
-
     for port in ports:
       self.enable_power(port, True)
-
-    time.sleep(delay)
+    if delay > 0:
+      time.sleep(delay)

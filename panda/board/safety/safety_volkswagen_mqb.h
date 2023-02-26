@@ -14,11 +14,8 @@ const SteeringLimits VOLKSWAGEN_MQB_STEERING_LIMITS = {
 
 // longitudinal limits
 // acceleration in m/s2 * 1000 to avoid floating point math
-const LongitudinalLimits VOLKSWAGEN_MQB_LONG_LIMITS = {
-  .max_accel = 2000,
-  .min_accel = -3500,
-  .inactive_accel = 3010,  // VW sends one increment above the max range when inactive
-};
+const int VOLKSWAGEN_MQB_MAX_ACCEL = 2000;
+const int VOLKSWAGEN_MQB_MIN_ACCEL = -3500;
 
 #define MSG_ESP_19      0x0B2   // RX from ABS, for wheel speeds
 #define MSG_LH_EPS_03   0x09F   // RX from EPS, for driver steering torque
@@ -30,7 +27,6 @@ const LongitudinalLimits VOLKSWAGEN_MQB_LONG_LIMITS = {
 #define MSG_GRA_ACC_01  0x12B   // TX by OP, ACC control buttons for cancel/resume
 #define MSG_ACC_07      0x12E   // TX by OP, ACC control instructions to the drivetrain coordinator
 #define MSG_ACC_02      0x30C   // TX by OP, ACC HUD data to the instrument cluster
-#define MSG_MOTOR_14    0x3BE   // RX from ECU, for brake switch status
 #define MSG_LDW_02      0x397   // TX by OP, Lane line recognition and text alerts
 
 // Transmit of GRA_ACC_01 is allowed on bus 0 and 2 to keep compatibility with gateway and camera integration
@@ -39,19 +35,16 @@ const CanMsg VOLKSWAGEN_MQB_LONG_TX_MSGS[] = {{MSG_HCA_01, 0, 8}, {MSG_LDW_02, 0
                                               {MSG_ACC_02, 0, 8}, {MSG_ACC_06, 0, 8}, {MSG_ACC_07, 0, 8}};
 
 AddrCheckStruct volkswagen_mqb_addr_checks[] = {
-  {.msg = {{MSG_ESP_19, 0, 8, .check_checksum = false, .max_counter = 0U, .expected_timestep = 10000U}, { 0 }, { 0 }}},
-  {.msg = {{MSG_LH_EPS_03, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 10000U}, { 0 }, { 0 }}},
-  {.msg = {{MSG_ESP_05, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
-  {.msg = {{MSG_TSK_06, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
-  {.msg = {{MSG_MOTOR_20, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
-  {.msg = {{MSG_MOTOR_14, 0, 8, .check_checksum = false, .max_counter = 0U, .expected_timestep = 100000U}, { 0 }, { 0 }}},
+  {.msg = {{MSG_ESP_19, 0, 8, .check_checksum = false, .max_counter = 0U,  .expected_timestep = 10000U}, { 0 }, { 0 }}},
+  {.msg = {{MSG_LH_EPS_03, 0, 8, .check_checksum = true,  .max_counter = 15U, .expected_timestep = 10000U}, { 0 }, { 0 }}},
+  {.msg = {{MSG_ESP_05, 0, 8, .check_checksum = true,  .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
+  {.msg = {{MSG_TSK_06, 0, 8, .check_checksum = true,  .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
+  {.msg = {{MSG_MOTOR_20, 0, 8, .check_checksum = true,  .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
 };
 #define VOLKSWAGEN_MQB_ADDR_CHECKS_LEN (sizeof(volkswagen_mqb_addr_checks) / sizeof(volkswagen_mqb_addr_checks[0]))
 addr_checks volkswagen_mqb_rx_checks = {volkswagen_mqb_addr_checks, VOLKSWAGEN_MQB_ADDR_CHECKS_LEN};
 
 uint8_t volkswagen_crc8_lut_8h2f[256]; // Static lookup table for CRC8 poly 0x2F, aka 8H2F/AUTOSAR
-bool volkswagen_mqb_brake_pedal_switch = false;
-bool volkswagen_mqb_brake_pressure_detected = false;
 
 static uint32_t volkswagen_mqb_get_checksum(CANPacket_t *to_push) {
   return (uint8_t)GET_BYTE(to_push, 0);
@@ -102,8 +95,6 @@ static const addr_checks* volkswagen_mqb_init(uint16_t param) {
 
   volkswagen_set_button_prev = false;
   volkswagen_resume_button_prev = false;
-  volkswagen_mqb_brake_pedal_switch = false;
-  volkswagen_mqb_brake_pressure_detected = false;
 
 #ifdef ALLOW_DEBUG
   volkswagen_longitudinal = GET_FLAG(param, FLAG_VOLKSWAGEN_LONG_CONTROL);
@@ -120,16 +111,15 @@ static int volkswagen_mqb_rx_hook(CANPacket_t *to_push) {
   if (valid && (GET_BUS(to_push) == 0U)) {
     int addr = GET_ADDR(to_push);
 
-    // Update in-motion state by sampling wheel speeds
+    // Update in-motion state by sampling front wheel speeds
+    // Signal: ESP_19.ESP_VL_Radgeschw_02 (front left) in scaled km/h
+    // Signal: ESP_19.ESP_VR_Radgeschw_02 (front right) in scaled km/h
     if (addr == MSG_ESP_19) {
-      // sum 4 wheel speeds
-      int speed = 0;
-      for (uint8_t i = 0U; i < 8U; i += 2U) {
-        int wheel_speed = GET_BYTE(to_push, i) | (GET_BYTE(to_push, i + 1U) << 8);
-        speed += wheel_speed;
-      }
-      // Check all wheel speeds for any movement
-      vehicle_moving = speed > 0;
+      int wheel_speed_fl = GET_BYTE(to_push, 4) | (GET_BYTE(to_push, 5) << 8);
+      int wheel_speed_fr = GET_BYTE(to_push, 6) | (GET_BYTE(to_push, 7) << 8);
+      // Check for average front speed in excess of 0.3m/s, 1.08km/h
+      // DBC speed scale 0.0075: 0.3m/s = 144, sum both wheels to compare
+      vehicle_moving = (wheel_speed_fl + wheel_speed_fr) > 288;
     }
 
     // Update driver input torque samples
@@ -186,24 +176,19 @@ static int volkswagen_mqb_rx_hook(CANPacket_t *to_push) {
       gas_pressed = ((GET_BYTES_04(to_push) >> 12) & 0xFFU) != 0U;
     }
 
-    // Signal: Motor_14.MO_Fahrer_bremst (ECU detected brake pedal switch F63)
-    if (addr == MSG_MOTOR_14) {
-      volkswagen_mqb_brake_pedal_switch = (GET_BYTE(to_push, 3) & 0x10U) >> 4;
-    }
-
-    // Signal: ESP_05.ESP_Fahrer_bremst (ESP detected driver brake pressure above platform specified threshold)
+    // Signal: ESP_05.ESP_Fahrer_bremst
     if (addr == MSG_ESP_05) {
-      volkswagen_mqb_brake_pressure_detected = (GET_BYTE(to_push, 3) & 0x4U) >> 2;
+      brake_pressed = (GET_BYTE(to_push, 3) & 0x4U) >> 2;
     }
-
-    brake_pressed = volkswagen_mqb_brake_pedal_switch || volkswagen_mqb_brake_pressure_detected;
 
     generic_rx_checks((addr == MSG_HCA_01));
   }
   return valid;
 }
 
-static int volkswagen_mqb_tx_hook(CANPacket_t *to_send) {
+static int volkswagen_mqb_tx_hook(CANPacket_t *to_send, bool longitudinal_allowed) {
+  UNUSED(longitudinal_allowed);
+
   int addr = GET_ADDR(to_send);
   int tx = 1;
 
@@ -245,7 +230,15 @@ static int volkswagen_mqb_tx_hook(CANPacket_t *to_send) {
       desired_accel = (((GET_BYTE(to_send, 7) << 3) | ((GET_BYTE(to_send, 6) & 0xE0U) >> 5)) * 5U) - 7220U;
     }
 
-    violation |= longitudinal_accel_checks(desired_accel, VOLKSWAGEN_MQB_LONG_LIMITS);
+    // VW send one increment above the max range when inactive
+    if (desired_accel == 3010) {
+      desired_accel = 0;
+    }
+
+    if (!controls_allowed && (desired_accel != 0)) {
+      violation = 1;
+    }
+    violation |= max_limit_check(desired_accel, VOLKSWAGEN_MQB_MAX_ACCEL, VOLKSWAGEN_MQB_MIN_ACCEL);
 
     if (violation) {
       tx = 0;

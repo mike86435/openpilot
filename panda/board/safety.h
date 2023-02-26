@@ -1,5 +1,4 @@
 #include "safety_declarations.h"
-#include "can_definitions.h"
 
 // include the safety policies.
 #include "safety/safety_defaults.h"
@@ -19,12 +18,14 @@
 #include "safety/safety_elm327.h"
 #include "safety/safety_body.h"
 
+#ifdef STM32H7
+#define CANFD
+#endif
+
 // CAN-FD only safety modes
 #ifdef CANFD
 #include "safety/safety_hyundai_canfd.h"
 #endif
-
-#include "safety/safety_volvo.h"
 
 // from cereal.car.CarParams.SafetyModel
 #define SAFETY_SILENT 0U
@@ -53,8 +54,6 @@
 #define SAFETY_FAW 26U
 #define SAFETY_BODY 27U
 #define SAFETY_HYUNDAI_CANFD 28U
-#define SAFETY_VOLVO_C1 29U
-#define SAFETY_VOLVO_EUCD 30U
 
 uint16_t current_safety_mode = SAFETY_SILENT;
 uint16_t current_safety_param = 0;
@@ -74,7 +73,7 @@ int safety_rx_hook(CANPacket_t *to_push) {
 }
 
 int safety_tx_hook(CANPacket_t *to_send) {
-  return (relay_malfunction ? -1 : current_hooks->tx(to_send));
+  return (relay_malfunction ? -1 : current_hooks->tx(to_send, get_longitudinal_allowed()));
 }
 
 int safety_tx_lin_hook(int lin_num, uint8_t *data, int len) {
@@ -312,8 +311,6 @@ const safety_hook_config safety_hook_registry[] = {
   {SAFETY_ALLOUTPUT, &alloutput_hooks},
   {SAFETY_FORD, &ford_hooks},
 #endif
-  {SAFETY_VOLVO_C1, &volvo_c1_hooks},
-  {SAFETY_VOLVO_EUCD, &volvo_eucd_hooks},
 };
 
 int set_safety_hooks(uint16_t mode, uint16_t param) {
@@ -490,49 +487,13 @@ float interpolate(struct lookup_t xy, float x) {
   return ret;
 }
 
-// Safety checks for longitudinal actuation
-bool longitudinal_accel_checks(int desired_accel, const LongitudinalLimits limits) {
-  bool violation = false;
-  if (!get_longitudinal_allowed()) {
-    violation |= desired_accel != limits.inactive_accel;
-  } else {
-    violation |= max_limit_check(desired_accel, limits.max_accel, limits.min_accel);
-  }
-  return violation;
-}
-
-bool longitudinal_speed_checks(int desired_speed, const LongitudinalLimits limits) {
-  return !get_longitudinal_allowed() && (desired_speed != limits.inactive_speed);
-}
-
-bool longitudinal_gas_checks(int desired_gas, const LongitudinalLimits limits) {
-  bool violation = false;
-  if (!get_longitudinal_allowed()) {
-    violation |= desired_gas != limits.inactive_gas;
-  } else {
-    violation |= max_limit_check(desired_gas, limits.max_gas, limits.min_gas);
-  }
-  return violation;
-}
-
-bool longitudinal_brake_checks(int desired_brake, const LongitudinalLimits limits) {
-  bool violation = false;
-  violation |= !get_longitudinal_allowed() && (desired_brake != 0);
-  violation |= desired_brake > limits.max_brake;
-  return violation;
-}
-
-bool longitudinal_interceptor_checks(CANPacket_t *to_send) {
-  return !get_longitudinal_allowed() && (GET_BYTE(to_send, 0) || GET_BYTE(to_send, 1));
-}
 
 // Safety checks for torque-based steering commands
 bool steer_torque_cmd_checks(int desired_torque, int steer_req, const SteeringLimits limits) {
   bool violation = false;
   uint32_t ts = microsecond_timer_get();
-  bool alka_enabled = alternative_experience & ALT_EXP_ALKA;
 
-  if (controls_allowed || alka_enabled) {
+  if (controls_allowed) {
     // *** global torque limit check ***
     violation |= max_limit_check(desired_torque, limits.max_steer, -limits.max_steer);
 
@@ -559,7 +520,7 @@ bool steer_torque_cmd_checks(int desired_torque, int steer_req, const SteeringLi
   }
 
   // no torque if controls is not allowed
-  if ((!controls_allowed && !alka_enabled) && (desired_torque != 0)) {
+  if (!controls_allowed && (desired_torque != 0)) {
     violation = true;
   }
 
@@ -601,7 +562,7 @@ bool steer_torque_cmd_checks(int desired_torque, int steer_req, const SteeringLi
   }
 
   // reset to 0 if either controls is not allowed or there's a violation
-  if (violation || (!controls_allowed && !alka_enabled)) {
+  if (violation || !controls_allowed) {
     valid_steer_req_count = 0;
     invalid_steer_req_count = 0;
     desired_torque_last = 0;
@@ -609,36 +570,6 @@ bool steer_torque_cmd_checks(int desired_torque, int steer_req, const SteeringLi
     ts_torque_check_last = ts;
     ts_steer_req_mismatch_last = ts;
   }
-
-  return violation;
-}
-
-// Safety checks for angle-based steering commands
-bool steer_angle_cmd_checks(int desired_angle, bool steer_control_enabled, const SteeringLimits limits) {
-  bool violation = false;
-  bool alka_enabled = alternative_experience & ALT_EXP_ALKA;
-
-  if ((controls_allowed || alka_enabled) && steer_control_enabled) {
-    // convert floating point angle rate limits to integers in the scale of the desired angle on CAN,
-    // add 1 to not false trigger the violation
-    int delta_angle_up = (interpolate(limits.angle_rate_up_lookup, vehicle_speed) * limits.angle_deg_to_can) + 1.;
-    int delta_angle_down = (interpolate(limits.angle_rate_down_lookup, vehicle_speed) * limits.angle_deg_to_can) + 1.;
-
-    int highest_desired_angle = desired_angle_last + ((desired_angle_last > 0) ? delta_angle_up : delta_angle_down);
-    int lowest_desired_angle = desired_angle_last - ((desired_angle_last >= 0) ? delta_angle_down : delta_angle_up);
-
-    // check for violation;
-    violation |= max_limit_check(desired_angle, highest_desired_angle, lowest_desired_angle);
-  }
-  desired_angle_last = desired_angle;
-
-  // Angle should be the same as current angle while not steering
-  violation |= ((!controls_allowed && !alka_enabled) &&
-                  ((desired_angle < (angle_meas.min - 1)) ||
-                  (desired_angle > (angle_meas.max + 1))));
-
-  // No angle control allowed when controls are not allowed
-  violation |= (!controls_allowed && !alka_enabled) && steer_control_enabled;
 
   return violation;
 }

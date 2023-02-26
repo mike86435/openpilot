@@ -14,7 +14,7 @@ void white_enable_can_transceiver(uint8_t transceiver, bool enabled) {
       set_gpio_output(GPIOA, 0, !enabled);
       break;
     default:
-      print("Invalid CAN transceiver ("); puth(transceiver); print("): enabling failed\n");
+      puts("Invalid CAN transceiver ("); puth(transceiver); puts("): enabling failed\n");
       break;
   }
 }
@@ -62,7 +62,7 @@ void white_set_usb_power_mode(uint8_t mode){
       break;
     default:
       valid_mode = false;
-      print("Invalid usb power mode\n");
+      puts("Invalid usb power mode\n");
       break;
   }
 
@@ -83,7 +83,7 @@ void white_set_gps_mode(uint8_t mode) {
       set_gpio_output(GPIOC, 5, 0);
       break;
     default:
-      print("Invalid ESP/GPS mode\n");
+      puts("Invalid ESP/GPS mode\n");
       break;
   }
 }
@@ -142,7 +142,7 @@ void white_set_can_mode(uint8_t mode){
       set_gpio_alternate(GPIOB, 6, GPIO_AF9_CAN2);
       break;
     default:
-      print("Tried to set unsupported CAN mode: "); puth(mode); print("\n");
+      puts("Tried to set unsupported CAN mode: "); puth(mode); puts("\n");
       break;
   }
 }
@@ -243,13 +243,11 @@ const harness_configuration white_harness_config = {
 
 const board board_white = {
   .board_type = "White",
-  .board_tick = unused_board_tick,
   .harness_config = &white_harness_config,
   .has_gps = false,
   .has_hw_gmlan = true,
   .has_obd = false,
   .has_lin = true,
-  .has_spi = false,
   .has_canfd = false,
   .has_rtc_battery = false,
   .fan_max_rpm = 0U,
@@ -266,6 +264,6 @@ const board board_white = {
   .set_fan_enabled = unused_set_fan_enabled,
   .set_ir_power = unused_set_ir_power,
   .set_phone_power = unused_set_phone_power,
-  .set_siren = unused_set_siren,
-  .read_som_gpio = unused_read_som_gpio
+  .set_clock_source_mode = unused_set_clock_source_mode,
+  .set_siren = unused_set_siren
 };
