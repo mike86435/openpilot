@@ -19,7 +19,7 @@ void uno_enable_can_transceiver(uint8_t transceiver, bool enabled) {
       set_gpio_output(GPIOB, 10, !enabled);
       break;
     default:
-      puts("Invalid CAN transceiver ("); puth(transceiver); puts("): enabling failed\n");
+      print("Invalid CAN transceiver ("); puth(transceiver); print("): enabling failed\n");
       break;
   }
 }
@@ -87,7 +87,7 @@ void uno_set_usb_power_mode(uint8_t mode) {
       valid = true;
       break;
     default:
-      puts("Invalid USB power mode\n");
+      print("Invalid USB power mode\n");
       break;
   }
   if (valid) {
@@ -115,7 +115,7 @@ void uno_set_gps_mode(uint8_t mode) {
       uno_set_gps_load_switch(true);
       break;
     default:
-      puts("Invalid ESP/GPS mode\n");
+      print("Invalid ESP/GPS mode\n");
       break;
   }
 }
@@ -143,7 +143,7 @@ void uno_set_can_mode(uint8_t mode){
       }
       break;
     default:
-      puts("Tried to set unsupported CAN mode: "); puth(mode); puts("\n");
+      print("Tried to set unsupported CAN mode: "); puth(mode); print("\n");
       break;
   }
 }
@@ -151,6 +151,17 @@ void uno_set_can_mode(uint8_t mode){
 void uno_usb_power_mode_tick(uint32_t uptime){
   UNUSED(uptime);
   if(bootkick_timer != 0U){
+    bootkick_timer--;
+  } else {
+    uno_set_bootkick(false);
+  }
+}
+
+void uno_board_tick(bool ignition, bool usb_enum, bool heartbeat_seen) {
+  UNUSED(ignition);
+  UNUSED(usb_enum);
+  UNUSED(heartbeat_seen);
+  if (bootkick_timer != 0U) {
     bootkick_timer--;
   } else {
     uno_set_bootkick(false);
@@ -212,10 +223,6 @@ void uno_init(void) {
   pwm_init(TIM4, 2);
   uno_set_ir_power(0U);
 
-  // Initialize fan and set to 0%
-  fan_init();
-  uno_set_fan_enabled(false);
-
   // Initialize harness
   harness_init();
 
@@ -265,11 +272,13 @@ const harness_configuration uno_harness_config = {
 
 const board board_uno = {
   .board_type = "Uno",
+  .board_tick = uno_board_tick,
   .harness_config = &uno_harness_config,
   .has_gps = true,
   .has_hw_gmlan = false,
   .has_obd = true,
   .has_lin = false,
+  .has_spi = false,
   .has_canfd = false,
   .has_rtc_battery = true,
   .fan_max_rpm = 5100U,

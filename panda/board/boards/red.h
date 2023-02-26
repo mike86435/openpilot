@@ -195,11 +195,13 @@ const harness_configuration red_harness_config = {
 
 const board board_red = {
   .board_type = "Red",
+  .board_tick = unused_board_tick,
   .harness_config = &red_harness_config,
   .has_gps = false,
   .has_hw_gmlan = false,
   .has_obd = true,
   .has_lin = false,
+  .has_spi = false,
   .has_canfd = true,
   .has_rtc_battery = false,
   .fan_max_rpm = 0U,

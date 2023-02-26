@@ -28,18 +28,20 @@ void grey_set_gps_mode(uint8_t mode) {
       set_gpio_output(GPIOC, 5, 0);
       break;
     default:
-      puts("Invalid ESP/GPS mode\n");
+      print("Invalid ESP/GPS mode\n");
       break;
   }
 }
 
 const board board_grey = {
   .board_type = "Grey",
+  .board_tick = unused_board_tick,
   .harness_config = &white_harness_config,
   .has_gps = true,
   .has_hw_gmlan = true,
   .has_obd = false,
   .has_lin = true,
+  .has_spi = false,
   .has_canfd = false,
   .has_rtc_battery = false,
   .fan_max_rpm = 0U,
