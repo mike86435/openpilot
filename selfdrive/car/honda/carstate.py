@@ -81,9 +81,8 @@ def get_can_signals(CP, gearbox_msg, main_on_sig_msg):
     signals.append(("EPB_STATE", "EPB_STATUS"))
     checks.append(("EPB_STATUS", 50))
     
-  elif CP.carFingerprint == CAR.CLARITY:
-    signals += [("EPB_STATE", "EPB_STATUS"),
-                ("BRAKE_ERROR_1", "BRAKE_ERROR"),
+  if CP.carFingerprint == CAR.CLARITY:
+    signals += [("BRAKE_ERROR_1", "BRAKE_ERROR"),
                 ("BRAKE_ERROR_2", "BRAKE_ERROR")]
     checks += [
       ("BRAKE_ERROR", 100),
