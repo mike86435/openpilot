@@ -130,12 +130,12 @@ void dos_set_fan_enabled(bool enabled){
   set_gpio_output(GPIOA, 1, enabled);
 }
 
-void dos_set_siren(bool enabled){
-  set_gpio_output(GPIOC, 12, enabled);
+void dos_set_clock_source_mode(uint8_t mode){
+  clock_source_init(mode);
 }
 
-bool dos_read_som_gpio (void){
-  return (get_gpio_input(GPIOC, 2) != 0);
+void dos_set_siren(bool enabled){
+  set_gpio_output(GPIOC, 12, enabled);
 }
 
 void dos_init(void) {
@@ -171,10 +171,6 @@ void dos_init(void) {
   // C8: FAN PWM aka TIM3_CH3
   set_gpio_alternate(GPIOC, 8, GPIO_AF2_TIM3);
 
-  // C2: SOM GPIO used as input (fan control at boot)
-  set_gpio_mode(GPIOC, 2, MODE_INPUT);
-  set_gpio_pullup(GPIOC, 2, PULL_DOWN);
-
   // Initialize IR PWM and set to 0%
   set_gpio_alternate(GPIOB, 7, GPIO_AF2_TIM4);
   pwm_init(TIM4, 2);
@@ -206,7 +202,7 @@ void dos_init(void) {
   }
 
   // Init clock source (camera strobe) using PWM
-  clock_source_init();
+  dos_set_clock_source_mode(CLOCK_SOURCE_MODE_PWM);
 }
 
 const harness_configuration dos_harness_config = {
@@ -252,6 +248,6 @@ const board board_dos = {
   .set_fan_enabled = dos_set_fan_enabled,
   .set_ir_power = dos_set_ir_power,
   .set_phone_power = unused_set_phone_power,
-  .set_siren = dos_set_siren,
-  .read_som_gpio = dos_read_som_gpio
+  .set_clock_source_mode = dos_set_clock_source_mode,
+  .set_siren = dos_set_siren
 };

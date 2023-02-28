@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
+import os
 import time
 from panda import Panda
 
 if __name__ == "__main__":
+  spi = "SPI" in os.environ
+  print("using SPI" if spi else "using USB")
+
+
   i = 0
   pi = 0
 
-  panda = Panda()
+  panda = Panda(spi=spi)
   while True:
     st = time.monotonic()
     while time.monotonic() - st < 1:
