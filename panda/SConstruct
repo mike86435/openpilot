@@ -1,6 +1,6 @@
 AddOption('--test',
           action='store_true',
-          default=False,
+          default=True,
           help='build test files')
 
 # panda fw & test files

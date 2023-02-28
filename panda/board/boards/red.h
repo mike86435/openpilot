@@ -49,29 +49,6 @@ void red_set_led(uint8_t color, bool enabled) {
   }
 }
 
-void red_set_usb_load_switch(bool enabled) {
-  set_gpio_output(GPIOB, 14, !enabled);
-}
-
-void red_set_usb_power_mode(uint8_t mode) {
-  bool valid = false;
-  switch (mode) {
-    case USB_POWER_CLIENT:
-      red_set_usb_load_switch(false);
-      valid = true;
-      break;
-    case USB_POWER_CDP:
-      red_set_usb_load_switch(true);
-      valid = true;
-      break;
-    default:
-      break;
-  }
-  if (valid) {
-    usb_power_mode = mode;
-  }
-}
-
 void red_set_can_mode(uint8_t mode) {
   switch (mode) {
     case CAN_MODE_NORMAL:
@@ -142,19 +119,15 @@ void red_init(void) {
   set_gpio_pullup(GPIOB, 4, PULL_NONE);
   set_gpio_mode(GPIOB, 4, MODE_OUTPUT);
 
-  // B14: usb load switch
-  set_gpio_pullup(GPIOB, 14, PULL_NONE);
-  set_gpio_mode(GPIOB, 14, MODE_OUTPUT);
-
   //B1: 5VOUT_S
   set_gpio_pullup(GPIOB, 1, PULL_NONE);
   set_gpio_mode(GPIOB, 1, MODE_ANALOG);
 
-  // Turn on USB load switch.
-  red_set_usb_load_switch(true);
-
-  // Set right power mode
-  red_set_usb_power_mode(USB_POWER_CDP);
+  // B14: usb load switch, enabled by pull resistor on board, obsolete for red panda
+  set_gpio_output_type(GPIOB, 14, OUTPUT_TYPE_OPEN_DRAIN);
+  set_gpio_pullup(GPIOB, 14, PULL_UP);
+  set_gpio_mode(GPIOB, 14, MODE_OUTPUT);
+  set_gpio_output(GPIOB, 14, 1);
 
   // Initialize harness
   harness_init();
@@ -209,15 +182,13 @@ const board board_red = {
   .enable_can_transceiver = red_enable_can_transceiver,
   .enable_can_transceivers = red_enable_can_transceivers,
   .set_led = red_set_led,
-  .set_usb_power_mode = red_set_usb_power_mode,
   .set_gps_mode = unused_set_gps_mode,
   .set_can_mode = red_set_can_mode,
-  .usb_power_mode_tick = unused_usb_power_mode_tick,
   .check_ignition = red_check_ignition,
   .read_current = unused_read_current,
   .set_fan_enabled = unused_set_fan_enabled,
   .set_ir_power = unused_set_ir_power,
   .set_phone_power = unused_set_phone_power,
-  .set_clock_source_mode = unused_set_clock_source_mode,
-  .set_siren = unused_set_siren
+  .set_siren = unused_set_siren,
+  .read_som_gpio = unused_read_som_gpio
 };
