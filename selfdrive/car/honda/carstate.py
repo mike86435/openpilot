@@ -87,7 +87,6 @@ def get_can_signals(CP, gearbox_msg, main_on_sig_msg):
                 ("BRAKE_ERROR_2", "BRAKE_ERROR")]
     checks += [
       ("BRAKE_ERROR", 100),
-      ("EPB_STATUS", 50),
     ]
     
   if CP.carFingerprint in HONDA_BOSCH:
