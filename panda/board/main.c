@@ -54,6 +54,20 @@ void debug_ring_callback(uart_ring *ring) {
     if (rcv == 'x') {
       NVIC_SystemReset();
     }
+
+    // enable CDP mode
+    if (rcv == 'C') {
+      print("switching USB to CDP mode\n");
+      current_board->set_usb_power_mode(USB_POWER_CDP);
+    }
+    if (rcv == 'c') {
+      print("switching USB to client mode\n");
+      current_board->set_usb_power_mode(USB_POWER_CLIENT);
+    }
+    if (rcv == 'D') {
+      print("switching USB to DCP mode\n");
+      current_board->set_usb_power_mode(USB_POWER_DCP);
+    }
   }
 }
 
@@ -170,7 +184,7 @@ void tick_handler(void) {
       #endif
 
       // set green LED to be controls allowed
-      current_board->set_led(LED_GREEN, controls_allowed | green_led_enabled);
+      current_board->set_led(LED_GREEN, controls_allowed);
 
       // turn off the blue LED, turned on by CAN
       // unless we are in power saving mode
@@ -245,13 +259,17 @@ void tick_handler(void) {
           current_board->set_ir_power(0U);
 
           // TODO: need a SPI equivalent
-          // If enumerated but no heartbeat (phone up, boardd not running), or when the SOM GPIO is pulled high by the ABL,
-          // turn the fan on to cool the device
-          if(usb_enumerated || current_board->read_som_gpio()){
+          // If enumerated but no heartbeat (phone up, boardd not running), turn the fan on to cool the device
+          if (usb_enumerated) {
             fan_set_power(50U);
           } else {
             fan_set_power(0U);
           }
+        }
+
+        // enter CDP mode when car starts to ensure we are charging a turned off EON
+        if (check_started() && ((usb_power_mode != USB_POWER_CDP) || !usb_enumerated)) {
+          current_board->set_usb_power_mode(USB_POWER_CDP);
         }
       }
 
@@ -283,6 +301,7 @@ void EXTI_IRQ_Handler(void) {
     exti_irq_clear();
     clock_init();
 
+    current_board->set_usb_power_mode(USB_POWER_CDP);
     set_power_save_state(POWER_SAVE_STATUS_DISABLED);
     deepsleep_allowed = false;
     heartbeat_counter = 0U;
@@ -395,15 +414,17 @@ int main(void) {
       #ifdef DEBUG_FAULTS
       if (fault_status == FAULT_STATUS_NONE) {
       #endif
+        uint32_t div_mode = ((usb_power_mode == USB_POWER_DCP) ? 4U : 1U);
+
         // useful for debugging, fade breaks = panda is overloaded
-        for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
+        for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += div_mode) {
           current_board->set_led(LED_RED, true);
           delay(fade >> 4);
           current_board->set_led(LED_RED, false);
           delay((MAX_LED_FADE - fade) >> 4);
         }
 
-        for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
+        for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= div_mode) {
           current_board->set_led(LED_RED, true);
           delay(fade >> 4);
           current_board->set_led(LED_RED, false);
@@ -422,6 +443,7 @@ int main(void) {
       if (deepsleep_allowed && !usb_enumerated && !check_started() && ignition_seen && (heartbeat_counter > 20U)) {
         usb_soft_disconnect(true);
         fan_set_power(0U);
+        current_board->set_usb_power_mode(USB_POWER_CLIENT);
         NVIC_DisableIRQ(TICK_TIMER_IRQ);
         delay(512000U);
 

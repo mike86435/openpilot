@@ -7,10 +7,8 @@
 
 #define CORE_FREQ 240U // in Mhz
 //APB1 - 120Mhz, APB2 - 120Mhz
-#define APB1_FREQ (CORE_FREQ/4U)
-#define APB1_TIMER_FREQ (APB1_FREQ*2U) // APB1 is multiplied by 2 for the timer peripherals
-#define APB2_FREQ (CORE_FREQ/4U)
-#define APB2_TIMER_FREQ (APB2_FREQ*2U) // APB2 is multiplied by 2 for the timer peripherals
+#define APB1_FREQ CORE_FREQ/2U
+#define APB2_FREQ CORE_FREQ/2U
 
 #define BOOTLOADER_ADDRESS 0x1FF09804U
 
