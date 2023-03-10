@@ -94,7 +94,7 @@ class CarInterface(CarInterfaceBase):
       if fw.ecu == "eps" and b"," in fw.fwVersion:
         eps_modified = True
 
-    eps_modified_clarity = 3
+    eps_modified_clarity = 1
     for fw in car_fw:
       if fw.ecu == "eps" and b"-" not in fw.fwVersion and b"," in fw.fwVersion:
         eps_modified_clarity = 3
@@ -353,6 +353,11 @@ class CarInterface(CarInterfaceBase):
       elif candidate == CAR.CRV_HYBRID:
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0x0, 0xB5, 0x161, 0x2D6, 0x4C0, 0x70D, 0xC42, 0x1058, 0x2C00], [0x0, 0x160, 0x1F0, 0x2E0, 0x378, 0x4A0, 0x5F0, 0x804, 0xF00]]
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.21], [0.07]] #still needs to finish tuning for the new car
+        ret.lateralTuning.pid.kf = 0.00004
+      elif candidate == CAR.CLARITY:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 0xA00, 0x3C00], [0, 2560, 3840]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.1575], [0.05175]]
+        print("clarity.brUHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH , 3x") # @clarity.bru: Hello =P -wirelessnet2  
         ret.lateralTuning.pid.kf = 0.00004
     else:
       CarInterfaceBase.configure_dp_tune(candidate, ret.lateralTuning)
