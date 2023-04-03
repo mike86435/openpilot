@@ -226,7 +226,7 @@ class CarController:
           apply_brake = clip(self.brake_last - wind_brake, 0.0, 1.0)
           apply_brake = int(clip(apply_brake * self.params.NIDEC_BRAKE_MAX, 0, self.params.NIDEC_BRAKE_MAX - 1))
           pump_on, self.last_pump_ts = brake_pump_hysteresis(apply_brake, self.apply_brake_last, self.last_pump_ts, ts)
-          if self.CP.carFingerprint == CAR.ODYSSEY_HYBRID:
+          if self.CP.carFingerprint in (CAR.ODYSSEY_HYBRID, CAR.CLARITY):
             pump_on = True
 
           pcm_override = True
