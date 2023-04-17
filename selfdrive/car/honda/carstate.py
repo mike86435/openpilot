@@ -4,10 +4,14 @@ from cereal import car
 from common.conversions import Conversions as CV
 from common.numpy_fast import interp
 from opendbc.can.can_define import CANDefine
+from common.params import put_nonblocking
 from opendbc.can.parser import CANParser
 from selfdrive.car.honda.hondacan import get_pt_bus
 from selfdrive.car.honda.values import CAR, DBC, STEER_THRESHOLD, HONDA_BOSCH, HONDA_NIDEC_ALT_SCM_MESSAGES, HONDA_BOSCH_ALT_BRAKE_SIGNAL, HONDA_BOSCH_RADARLESS
 from selfdrive.car.interfaces import CarStateBase
+
+import time
+from math import floor
 
 TransmissionType = car.CarParams.TransmissionType
 
@@ -163,6 +167,9 @@ class CarState(CarStateBase):
     self.cruise_setting = 0
     self.v_cruise_pcm_prev = 0
     self.engineRPM = 0
+    self.read_distance_lines_init = False
+    self.read_distance_lines = 4
+    self.prev_read_distance_lines = self.read_distance_lines
     self.hud_lead = 0
 
     # When available we use cp.vl["CAR_SPEED"]["ROUGH_CAR_SPEED_2"] to populate vEgoCluster
@@ -239,6 +246,18 @@ class CarState(CarStateBase):
     #dp
     self.engineRPM = cp.vl["POWERTRAIN_DATA"]['ENGINE_RPM']
 
+    # when user presses distance button on steering wheel
+    if self.prev_cruise_setting == 3:
+      if self.cruise_setting == 0:
+        self.prev_read_distance_lines = self.read_distance_lines
+        self.read_distance_lines = self.read_distance_lines % 4 + 1
+
+    if not self.read_distance_lines_init or self.read_distance_lines != self.prev_read_distance_lines:
+        self.read_distance_lines_init = True
+        put_nonblocking('dp_following_profile', str(int(min(self.read_distance_lines - 1, 2))))
+        put_nonblocking('dp_last_modified',str(floor(time.time())))
+        self.prev_read_distance_lines = self.read_distance_lines
+
     # TODO: set for all cars
     if self.CP.carFingerprint in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY, CAR.ODYSSEY_CHN, CAR.ODYSSEY_HYBRID, CAR.CLARITY}):
       ret.parkingBrake = cp.vl["EPB_STATUS"]["EPB_STATE"] != 0
@@ -312,7 +331,7 @@ class CarState(CarStateBase):
       if self.CP.carFingerprint not in HONDA_BOSCH_RADARLESS:
         ret.stockAeb = (not self.CP.openpilotLongitudinalControl) and bool(cp.vl["ACC_CONTROL"]["AEB_STATUS"] and cp.vl["ACC_CONTROL"]["ACCEL_COMMAND"] < -1e-5)
     else:
-      ret.stockAeb = bool(cp_cam.vl["BRAKE_COMMAND"]["AEB_REQ_1"] and cp_cam.vl["BRAKE_COMMAND"]["COMPUTER_BRAKE"] > 1e-5)
+      ret.stockAeb = bool(cp_cam.vl["BRAKE_COMMAND"]["AEB_REQ_1"] and cp_cam.vl["BRAKE_COMMAND"]["COMPUTER_BRAKE_ALT"] > 1e-5)
 
     self.acc_hud = False
     self.lkas_hud = False

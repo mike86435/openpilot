@@ -21,8 +21,9 @@ def get_lkas_cmd_bus(car_fingerprint, radar_disabled=False):
   return 0
 
 
-def create_brake_command(packer, apply_brake, pump_on, pcm_override, pcm_cancel_cmd, fcw, car_fingerprint, stock_brake):
+def create_brake_command(packer, apply_brake, pcm_override, pcm_cancel_cmd, fcw, car_fingerprint, stock_brake):
   # TODO: do we loose pressure if we keep pump off for long?
+  pump_on = apply_brake > 0
   brakelights = apply_brake > 0
   brake_rq = apply_brake > 0
   pcm_fault_cmd = False
@@ -112,7 +113,7 @@ def create_ui_commands(packer, CP, enabled, pcm_speed, hud, is_metric, acc_hud, 
     acc_hud_values = {
       'CRUISE_SPEED': hud.v_cruise,
       'ENABLE_MINI_CAR': 1 if enabled else 0,
-      'HUD_DISTANCE': 0,  # max distance setting on display
+      'HUD_DISTANCE': hud.distance_lines % 4,
       'IMPERIAL_UNIT': int(not is_metric),
       'HUD_LEAD': 2 if enabled and hud.lead_visible else 1 if enabled else 0,
       'SET_ME_X01_2': 1,
