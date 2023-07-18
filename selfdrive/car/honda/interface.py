@@ -96,6 +96,13 @@ class CarInterface(CarInterfaceBase):
       if fw.ecu == "eps" and b"," in fw.fwVersion:
         eps_modified = True
 
+    eps_modified_clarity = 1
+    for fw in car_fw:
+      if fw.ecu == "eps" and b"-" not in fw.fwVersion and b"," in fw.fwVersion:
+        eps_modified_clarity = 3
+      elif fw.ecu == "eps" and b"-" in fw.fwVersion and b"," in fw.fwVersion:
+        eps_modified_clarity = 2
+
     if candidate == CAR.CIVIC:
       ret.mass = CivicParams.MASS
       ret.wheelbase = CivicParams.WHEELBASE
@@ -281,6 +288,25 @@ class CarInterface(CarInterfaceBase):
       tire_stiffness_factor = 0.82
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.6], [0.18]] # TODO: can probably use some tuning
 
+    elif candidate == CAR.CLARITY:
+      ret.mass = 4052. * CV.LB_TO_KG + STD_CARGO_KG
+      ret.wheelbase = 2.75
+      ret.centerToFront = ret.wheelbase * 0.4
+      ret.steerRatio = 16.50  # 12.72 is end-to-end spec
+      if eps_modified_clarity == 2:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 0xA00, 0x2800], [0, 2560, 3840]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.3], [0.1]]
+        print ("2x")
+      elif eps_modified_clarity == 3:
+        ret.lateralTuning.pid.kf = 0.00004
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 0xA00, 0x3C00], [0, 2560, 3840]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.1575], [0.05175]]
+        print("clarity.brUHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH , 3x") # @clarity.bru: Hello =P -wirelessnet2      
+      else:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560], [0, 2560]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
+      tire_stiffness_factor = 1.
+
     else:
       raise ValueError(f"unsupported car {candidate}")
 
@@ -301,7 +327,7 @@ class CarInterface(CarInterfaceBase):
     # min speed to enable ACC. if car can do stop and go, then set enabling speed
     # to a negative value, so it won't matter. Otherwise, add 0.5 mph margin to not
     # conflict with PCM acc
-    ret.autoResumeSng = candidate in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY_HYBRID}) or ret.enableGasInterceptor
+    ret.autoResumeSng = candidate in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY_HYBRID, CAR.CLARITY}) or ret.enableGasInterceptor
     ret.minEnableSpeed = -1. if ret.autoResumeSng else 25.5 * CV.MPH_TO_MS
 
     # TODO: start from empirically derived lateral slip stiffness for the civic and scale by
@@ -329,6 +355,11 @@ class CarInterface(CarInterfaceBase):
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0x0, 0xB5, 0x161, 0x2D6, 0x4C0, 0x70D, 0xC42, 0x1058, 0x2C00], [0x0, 0x160, 0x1F0, 0x2E0, 0x378, 0x4A0, 0x5F0, 0x804, 0xF00]]
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.21], [0.07]] #still needs to finish tuning for the new car
         ret.lateralTuning.pid.kf = 0.00004
+      elif candidate == CAR.CLARITY:
+        ret.lateralTuning.pid.kf = 0.00004
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 0xA00, 0x3C00], [0, 2560, 3840]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.1575], [0.05175]]
+        print("clarity.brUHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH , 3x") # @clarity.bru: Hello =P -wirelessnet2
 
     CarInterfaceBase.dp_lat_tune_collection(candidate, ret.latTuneCollection)
     CarInterfaceBase.configure_dp_tune(ret.lateralTuning, ret.latTuneCollection)
